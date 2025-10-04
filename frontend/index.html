@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Instrument Management Console</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Instrument &amp; Watchlist Console</h1>
+      <p>Upload 100k+ instrument dumps, run fuzzy searches, and monitor live prices via Kite Connect.</p>
+    </header>
+
+    <main>
+      <section class="card" id="auth-card">
+        <h2>1. Authenticate</h2>
+        <p>
+          A default admin user is available for demos:<br />
+          <code>admin@example.com</code> / <code>admin123</code>
+        </p>
+        <form id="login-form">
+          <div class="form-row">
+            <label for="login-email">Email</label>
+            <input id="login-email" name="email" type="email" required value="admin@example.com" />
+          </div>
+          <div class="form-row">
+            <label for="login-password">Password</label>
+            <input id="login-password" name="password" type="password" required value="admin123" />
+          </div>
+          <button type="submit">Login</button>
+          <p id="login-status" role="status"></p>
+        </form>
+      </section>
+
+      <section class="card" id="kite-card">
+        <h2>2. Configure Kite Credentials</h2>
+        <p>
+          Provide your Kite Connect API key and the daily access token. Tokens are stored in-memory for the current
+          server session. Use the test button to verify connectivity.
+        </p>
+        <form id="kite-form">
+          <div class="form-row">
+            <label for="kite-api-key">API Key</label>
+            <input id="kite-api-key" name="api_key" type="text" autocomplete="off" />
+          </div>
+          <div class="form-row">
+            <label for="kite-access-token">Access Token</label>
+            <input id="kite-access-token" name="access_token" type="text" autocomplete="off" />
+          </div>
+          <div class="form-row">
+            <label for="kite-valid-till">Valid Till (optional)</label>
+            <input id="kite-valid-till" name="valid_till" type="datetime-local" />
+          </div>
+          <div class="form-actions">
+            <button type="submit">Save Credentials</button>
+            <button type="button" id="kite-test">Test Connectivity</button>
+            <button type="button" id="kite-clear" class="danger">Clear</button>
+          </div>
+          <p id="kite-status" role="status"></p>
+        </form>
+      </section>
+
+      <section class="card" id="import-card">
+        <h2>3. Upload Instrument CSV</h2>
+        <p>
+          The importer accepts CSV files with the following header columns:
+          <code>instrument_token</code>, <code>exchange_token</code>, <code>tradingsymbol</code>,
+          <code>name</code>, <code>last_price</code>, <code>expiry</code>, <code>strike</code>,
+          <code>tick_size</code>, <code>lot_size</code>, <code>instrument_type</code>, <code>segment</code>,
+          <code>exchange</code>.
+        </p>
+        <form id="import-form">
+          <div class="form-row">
+            <label for="import-source">Source</label>
+            <select id="import-source" name="source" required>
+              <option value="zerodha">Zerodha</option>
+              <option value="upstox">Upstox</option>
+              <option value="dhan">Dhan</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="import-file">CSV File</label>
+            <input id="import-file" name="file" type="file" accept=".csv" required />
+          </div>
+          <div class="form-row checkbox">
+            <input id="replace-existing" name="replace" type="checkbox" />
+            <label for="replace-existing">Delete existing instruments before import</label>
+          </div>
+          <button type="submit">Start Import</button>
+          <p id="import-status" role="status"></p>
+        </form>
+      </section>
+
+      <section class="card" id="search-card">
+        <h2>4. Search Instruments</h2>
+        <form id="search-form">
+          <div class="form-row">
+            <label for="search-query">Query</label>
+            <input id="search-query" name="q" type="text" placeholder="Tradingsymbol, name, or token" />
+          </div>
+          <div class="form-row multi">
+            <label for="search-segment">Segment</label>
+            <input id="search-segment" name="segment" type="text" placeholder="EQ, FUT, OPT..." />
+            <label for="search-exchange">Exchange</label>
+            <input id="search-exchange" name="exchange" type="text" placeholder="NSE, BSE..." />
+            <label for="search-type">Instrument Type</label>
+            <input id="search-type" name="type" type="text" placeholder="EQ, FUT, CE, PE" />
+          </div>
+          <div class="form-row">
+            <label for="search-limit">Limit</label>
+            <input id="search-limit" name="limit" type="number" min="1" max="500" value="20" />
+          </div>
+          <div class="form-actions">
+            <button type="submit">Run Search</button>
+            <button type="button" id="load-more" disabled>Load More</button>
+            <button type="button" id="clear-db" class="danger">Delete All Instruments</button>
+          </div>
+          <p id="search-status" role="status"></p>
+        </form>
+        <div id="results-meta"></div>
+        <div class="table-wrapper">
+          <table id="results-table">
+            <thead>
+              <tr>
+                <th>Instrument ID</th>
+                <th>Token</th>
+                <th>Tradingsymbol</th>
+                <th>Name</th>
+                <th>Exchange</th>
+                <th>Segment</th>
+                <th>Type</th>
+                <th>Lot Size</th>
+                <th>Tick Size</th>
+                <th>Last Price</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" id="watchlists-card">
+        <h2>5. Watchlists &amp; Live Quotes</h2>
+        <div class="watchlist-layout">
+          <form id="create-watchlist-form" class="inline-form">
+            <label for="watchlist-name">Create watchlist</label>
+            <input id="watchlist-name" name="name" type="text" placeholder="e.g. Nifty Movers" required />
+            <button type="submit">Create</button>
+          </form>
+          <div class="watchlist-controls">
+            <label for="watchlist-select">Active watchlist</label>
+            <select id="watchlist-select"></select>
+            <button type="button" id="refresh-watchlists">Refresh Lists</button>
+            <button type="button" id="refresh-watchlist-items">Refresh Quotes</button>
+          </div>
+          <p id="watchlist-status" role="status"></p>
+          <div id="watchlist-meta"></div>
+          <div class="table-wrapper">
+            <table id="watchlist-table">
+              <thead>
+                <tr>
+                  <th>Item ID</th>
+                  <th>Token</th>
+                  <th>Tradingsymbol</th>
+                  <th>Name</th>
+                  <th>Exchange</th>
+                  <th>Type</th>
+                  <th>Live Price</th>
+                  <th>Source</th>
+                  <th>Updated</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" id="imports-card">
+        <h2>Import History</h2>
+        <button type="button" id="refresh-imports">Refresh Imports</button>
+        <div class="table-wrapper">
+          <table id="imports-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Source</th>
+                <th>Status</th>
+                <th>Rows In</th>
+                <th>Rows OK</th>
+                <th>Rows Err</th>
+                <th>Started</th>
+                <th>Finished</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <p>
+        Built with FastAPI &mdash; upload files with 100k+ rows, perform fuzzy lookups, and manage the instrument universe in one
+        place.
+      </p>
+    </footer>
+
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>
