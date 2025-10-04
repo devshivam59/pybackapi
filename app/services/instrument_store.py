@@ -7,8 +7,8 @@ from contextlib import contextmanager
 from datetime import datetime
 from io import TextIOBase
 from pathlib import Path
-from typing import Iterator, List, Optional, Sequence, Tuple
-from uuid import uuid4
+from typing import Dict, Iterator, List, Optional, Sequence, Tuple
+from uuid import NAMESPACE_URL, uuid5
 
 from rapidfuzz import fuzz, process
 
@@ -45,6 +45,7 @@ class InstrumentStore:
         self.batch_size = batch_size
         self.max_candidates = max_candidates
         self._initialized = False
+        self._namespace = uuid5(NAMESPACE_URL, "pybackapi.instrument")
 
     def initialize(self) -> None:
         if self._initialized:
@@ -54,6 +55,7 @@ class InstrumentStore:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("PRAGMA synchronous=NORMAL;")
             conn.execute("PRAGMA temp_store=MEMORY;")
+            conn.execute("PRAGMA cache_size=-131072;")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS instruments (
@@ -239,12 +241,13 @@ class InstrumentStore:
         now = datetime.utcnow
 
         with self._get_connection() as conn:
+            existing_ids = self._load_existing_ids(conn)
             if replace_existing:
                 conn.execute("DELETE FROM instruments")
             for row in reader:
                 rows_in += 1
                 try:
-                    normalized = self._normalize_row(row, now())
+                    normalized = self._prepare_row(row, now(), existing_ids)
                 except ValueError as exc:  # noqa: PERF203
                     rows_err += 1
                     errors.append(f"Row {rows_in}: {exc}")
@@ -295,7 +298,12 @@ class InstrumentStore:
             batch,
         )
 
-    def _normalize_row(self, row: dict, timestamp: datetime) -> Tuple:
+    def _prepare_row(
+        self,
+        row: dict,
+        timestamp: datetime,
+        existing_ids: Dict[str, str],
+    ) -> Tuple:
         def clean_str(value: Optional[str]) -> str:
             return (value or "").strip()
 
@@ -340,8 +348,18 @@ class InstrumentStore:
         if not exchange:
             raise ValueError("exchange is required")
 
+        instrument_type = instrument_type.upper()
+        segment = segment.upper()
+        exchange = exchange.upper()
+
+        key = self._make_key(exchange, instrument_token)
+        instrument_id = existing_ids.get(key)
+        if instrument_id is None:
+            instrument_id = self._generate_instrument_id(exchange, instrument_token)
+            existing_ids[key] = instrument_id
+
         return (
-            f"ins_{uuid4().hex}",
+            instrument_id,
             instrument_token,
             exchange_token,
             tradingsymbol,
@@ -357,6 +375,23 @@ class InstrumentStore:
             timestamp.isoformat(),
             timestamp.isoformat(),
         )
+
+    def _generate_instrument_id(self, exchange: str, instrument_token: str) -> str:
+        seed = f"{exchange}:{instrument_token}"
+        return f"ins_{uuid5(self._namespace, seed).hex}"
+
+    def _load_existing_ids(self, conn: sqlite3.Connection) -> Dict[str, str]:
+        rows = conn.execute(
+            "SELECT instrument_token, exchange, instrument_id FROM instruments",
+        ).fetchall()
+        return {
+            self._make_key(row["exchange"], row["instrument_token"]): row["instrument_id"]
+            for row in rows
+        }
+
+    @staticmethod
+    def _make_key(exchange: str, instrument_token: str) -> str:
+        return f"{exchange.upper()}:{instrument_token}"
 
     def clear_instruments(self) -> int:
         with self._get_connection() as conn:
@@ -430,12 +465,12 @@ class InstrumentStore:
 
         with self._get_connection() as conn:
             if query:
-                like_term = f"%{query.lower()}%"
+                like_term = f"%{query}%"
                 like_where = (
                     f"{base_where} AND ("
-                    " LOWER(tradingsymbol) LIKE ? OR"
-                    " LOWER(name) LIKE ? OR"
-                    " LOWER(instrument_token) LIKE ?"
+                    " tradingsymbol LIKE ? COLLATE NOCASE OR"
+                    " name LIKE ? COLLATE NOCASE OR"
+                    " instrument_token LIKE ?"
                     ")"
                 )
                 like_params = params + [like_term, like_term, like_term]
@@ -449,7 +484,7 @@ class InstrumentStore:
                     f"""
                     SELECT * FROM instruments
                     WHERE {like_where}
-                    ORDER BY tradingsymbol
+                    ORDER BY tradingsymbol COLLATE NOCASE
                     LIMIT ?
                     """,
                     like_params + [candidate_limit],
@@ -483,7 +518,7 @@ class InstrumentStore:
                     f"""
                     SELECT * FROM instruments
                     WHERE {base_where}
-                    ORDER BY tradingsymbol
+                    ORDER BY tradingsymbol COLLATE NOCASE
                     LIMIT ? OFFSET ?
                     """,
                     params + [limit, offset],

@@ -56,7 +56,7 @@ The demo admin is provisioned on startup and has full privileges for importing/p
 ### Instrument imports & watchlists
 
 - CSV uploads must include the following headers: `instrument_token`, `exchange_token`, `tradingsymbol`, `name`, `last_price`, `expiry`, `strike`, `tick_size`, `lot_size`, `instrument_type`, `segment`, `exchange`.
-- Use the `replace_existing` toggle to clear the existing catalog before loading a fresh dump.
+- Use the `replace_existing` toggle to clear the existing catalog before loading a fresh dump. Instrument IDs are derived from the exchange/token pair so watchlists keep working after refreshing the catalog.
 - Imports are tracked in the `instrument_imports` table and surfaced via `GET /v1/instruments/imports` and the UI.
 - Watchlists can be created from the UI once logged in. Use the search table's "Add" buttons to populate a watchlist and the watchlist table's "Remove" buttons to prune entries.
 - When Kite credentials are configured, `/v1/watchlists/{watchlist_id}/items` and `/v1/market/quotes` will enrich instruments with live LTP sourced from Kite. Without credentials, the endpoints fall back to the last imported price.
