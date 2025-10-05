@@ -108,11 +108,16 @@ async def search_instruments(
         if offset < 0:
             offset = 0
 
+    # normalize filters to uppercase for consistent matching
+    normalized_segment = segment.upper() if segment else None
+    normalized_exchange = exchange.upper() if exchange else None
+    normalized_type = instrument_type.upper() if instrument_type else None
+
     items, next_cursor, total = instrument_store.search(
         query=q.strip() if q else None,
-        segment=segment,
-        exchange=exchange,
-        instrument_type=instrument_type,
+        segment=normalized_segment,
+        exchange=normalized_exchange,
+        instrument_type=normalized_type,
         limit=limit,
         offset=offset,
     )

@@ -2,31 +2,66 @@ const state = {
   token: null,
   nextCursor: null,
   lastSearchParams: {},
+  watchlists: [],
+  selectedWatchlistId: null,
+  kiteStatus: null,
+  activePanel: 'overview',
+  dashboard: null,
+  users: [],
 };
+
+const panelButtons = document.querySelectorAll('[data-panel-target]');
+const panels = document.querySelectorAll('.panel');
 
 const loginForm = document.getElementById('login-form');
 const loginStatus = document.getElementById('login-status');
+
+const dashboardTotals = document.getElementById('dashboard-totals');
+const dashboardStatus = document.getElementById('dashboard-status');
+const dashboardKite = document.getElementById('dashboard-kite');
+const dashboardImport = document.getElementById('dashboard-import');
+const dashboardRefreshButton = document.getElementById('dashboard-refresh');
+
 const importForm = document.getElementById('import-form');
 const importStatus = document.getElementById('import-status');
+const refreshImportsButton = document.getElementById('refresh-imports');
+const importsTableBody = document.querySelector('#imports-table tbody');
+
 const searchForm = document.getElementById('search-form');
 const searchStatus = document.getElementById('search-status');
 const resultsMeta = document.getElementById('results-meta');
 const resultsTableBody = document.querySelector('#results-table tbody');
 const loadMoreButton = document.getElementById('load-more');
 const clearDbButton = document.getElementById('clear-db');
-const refreshImportsButton = document.getElementById('refresh-imports');
-const importsTableBody = document.querySelector('#imports-table tbody');
+
+const kiteForm = document.getElementById('kite-form');
+const kiteStatus = document.getElementById('kite-status');
+const kiteTestButton = document.getElementById('kite-test');
+const kiteClearButton = document.getElementById('kite-clear');
+
+const createWatchlistForm = document.getElementById('create-watchlist-form');
+const watchlistSelect = document.getElementById('watchlist-select');
+const refreshWatchlistsButton = document.getElementById('refresh-watchlists');
+const refreshWatchlistItemsButton = document.getElementById('refresh-watchlist-items');
+const watchlistStatus = document.getElementById('watchlist-status');
+const watchlistMeta = document.getElementById('watchlist-meta');
+const watchlistTableBody = document.querySelector('#watchlist-table tbody');
+
+const userSearchForm = document.getElementById('user-search-form');
+const userSearchInput = document.getElementById('user-search');
+const refreshUsersButton = document.getElementById('refresh-users');
+const usersStatus = document.getElementById('users-status');
+const usersTableBody = document.querySelector('#users-table tbody');
 
 function setStatus(element, message, tone = 'info') {
   if (!element) return;
   element.textContent = message ?? '';
-  element.dataset.tone = tone;
+  if (message) element.dataset.tone = tone;
+  else delete element.dataset.tone;
 }
 
 function requireToken() {
-  if (!state.token) {
-    throw new Error('Please login first to obtain an access token.');
-  }
+  if (!state.token) throw new Error('Please login first to obtain an access token.');
 }
 
 async function authenticatedFetch(url, options = {}) {
@@ -39,10 +74,45 @@ async function authenticatedFetch(url, options = {}) {
   return fetch(url, config);
 }
 
-function renderInstruments(items, { append = false } = {}) {
-  if (!append) {
-    resultsTableBody.innerHTML = '';
+function describeKiteStatus(statusPayload) {
+  if (!statusPayload || !statusPayload.configured) return 'No Kite credentials stored.';
+  const parts = ['Kite credentials active'];
+  if (statusPayload.api_key_last4) parts.push(`API key •••${statusPayload.api_key_last4}`);
+  if (statusPayload.access_token_last4) parts.push(`Token •••${statusPayload.access_token_last4}`);
+  if (statusPayload.valid_till) parts.push(`valid till ${new Date(statusPayload.valid_till).toLocaleString()}`);
+  return parts.join(' · ');
+}
+
+function setActivePanel(panelId) {
+  if (!panelId) return;
+  state.activePanel = panelId;
+  panels.forEach((p) => p.classList.toggle('active', p.dataset.panel === panelId));
+  panelButtons.forEach((b) => b.classList.toggle('active', b.dataset.panelTarget === panelId));
+
+  if (!state.token) return;
+
+  switch (panelId) {
+    case 'overview':
+      void loadDashboard({ showToast: false });
+      break;
+    case 'instruments':
+      if (!resultsTableBody.children.length) void executeSearch({ append: false });
+      void refreshImports();
+      break;
+    case 'watchlists':
+      void loadWatchlists({ preserveSelection: true });
+      break;
+    case 'kite':
+      void refreshKiteStatus({ showMessage: false });
+      break;
+    case 'users':
+      void loadUsers();
+      break;
   }
+}
+
+function renderInstruments(items, { append = false } = {}) {
+  if (!append) resultsTableBody.innerHTML = '';
   for (const item of items) {
     const row = document.createElement('tr');
     row.innerHTML = `
@@ -55,9 +125,36 @@ function renderInstruments(items, { append = false } = {}) {
       <td>${item.instrument_type}</td>
       <td>${item.lot_size}</td>
       <td>${item.tick_size}</td>
-      <td>${item.last_price}</td>
+      <td>${item.last_price ?? ''}</td>
+      <td class="actions"><button type="button" class="table-action add-to-watchlist" data-instrument="${item.id}">Add</button></td>
     `;
     resultsTableBody.appendChild(row);
+  }
+  syncAddButtonsState();
+}
+
+function syncAddButtonsState() {
+  document.querySelectorAll('.add-to-watchlist').forEach((btn) => (btn.disabled = !state.selectedWatchlistId));
+}
+
+function formatDate(value) {
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return value ?? '';
+  }
+}
+
+async function refreshImports() {
+  if (!state.token) return;
+  try {
+    const res = await authenticatedFetch('/v1/instruments/imports');
+    const payload = await res.json();
+    if (!res.ok) throw new Error(payload.detail ?? 'Unable to fetch imports');
+    renderImports(payload);
+  } catch (e) {
+    console.error(e);
+    setStatus(importStatus, e.message, 'error');
   }
 }
 
@@ -79,185 +176,11 @@ function renderImports(items) {
   }
 }
 
-function formatDate(value) {
-  try {
-    return new Date(value).toLocaleString();
-  } catch (error) {
-    return value ?? '';
-  }
-}
-
-loginForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const formData = new FormData(loginForm);
-  const email = formData.get('email');
-  const password = formData.get('password');
-
+loginForm?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(loginForm);
+  const email = fd.get('email');
+  const password = fd.get('password');
   setStatus(loginStatus, 'Logging in…');
   try {
-    const response = await fetch(`/v1/auth/login?email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`, {
-      method: 'POST',
-    });
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.detail ?? 'Login failed');
-    }
-    const payload = await response.json();
-    state.token = payload.access_token;
-    setStatus(loginStatus, 'Login successful. Token stored in memory.', 'success');
-    await refreshImports();
-  } catch (error) {
-    console.error(error);
-    setStatus(loginStatus, error.message, 'error');
-  }
-});
-
-importForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  try {
-    requireToken();
-  } catch (error) {
-    setStatus(importStatus, error.message, 'error');
-    return;
-  }
-
-  const source = document.getElementById('import-source').value;
-  const replace = document.getElementById('replace-existing').checked;
-  const fileInput = document.getElementById('import-file');
-  if (!fileInput.files.length) {
-    setStatus(importStatus, 'Please choose a CSV file.', 'error');
-    return;
-  }
-
-  const formData = new FormData();
-  formData.append('file', fileInput.files[0]);
-
-  setStatus(importStatus, 'Uploading file…');
-  try {
-    const response = await authenticatedFetch(
-      `/v1/instruments/import?source=${encodeURIComponent(source)}&replace_existing=${replace}`,
-      {
-        method: 'POST',
-        body: formData,
-      },
-    );
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.detail ?? 'Import failed');
-    }
-    setStatus(importStatus, `Import ${payload.import_id} completed (${payload.rows_ok} rows).`, 'success');
-    fileInput.value = '';
-    await refreshImports();
-  } catch (error) {
-    console.error(error);
-    setStatus(importStatus, error.message, 'error');
-  }
-});
-
-async function executeSearch({ append = false, cursor = null } = {}) {
-  try {
-    requireToken();
-  } catch (error) {
-    setStatus(searchStatus, error.message, 'error');
-    return;
-  }
-
-  const params = new URLSearchParams();
-  Object.entries(state.lastSearchParams).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== '') {
-      params.set(key, value);
-    }
-  });
-  if (cursor) {
-    params.set('cursor', cursor);
-  }
-
-  setStatus(searchStatus, append ? 'Loading more…' : 'Searching…');
-  try {
-    const response = await authenticatedFetch(`/v1/instruments?${params.toString()}`);
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.detail ?? 'Search failed');
-    }
-    renderInstruments(payload.items ?? [], { append });
-    state.nextCursor = payload.next_cursor ?? null;
-    loadMoreButton.disabled = !state.nextCursor;
-    const total = payload.total ?? (payload.items?.length ?? 0);
-    const displayed = document.querySelectorAll('#results-table tbody tr').length;
-    resultsMeta.textContent = `Showing ${displayed} instruments${total ? ` of ${total}` : ''}.`;
-    setStatus(searchStatus, payload.items?.length ? `Retrieved ${payload.items.length} instruments.` : 'No instruments found.', 'success');
-  } catch (error) {
-    console.error(error);
-    setStatus(searchStatus, error.message, 'error');
-  }
-}
-
-searchForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const formData = new FormData(searchForm);
-  state.lastSearchParams = {
-    q: formData.get('q')?.trim() ?? '',
-    segment: formData.get('segment')?.trim() ?? '',
-    exchange: formData.get('exchange')?.trim() ?? '',
-    type: formData.get('type')?.trim() ?? '',
-    limit: formData.get('limit')?.toString() ?? '20',
-  };
-  await executeSearch({ append: false });
-});
-
-loadMoreButton.addEventListener('click', async () => {
-  if (!state.nextCursor) return;
-  await executeSearch({ append: true, cursor: state.nextCursor });
-});
-
-clearDbButton.addEventListener('click', async () => {
-  if (!state.token) {
-    setStatus(searchStatus, 'Please login first.', 'error');
-    return;
-  }
-  if (!window.confirm('This will delete all instruments. Continue?')) {
-    return;
-  }
-  setStatus(searchStatus, 'Deleting instrument database…');
-  try {
-    const response = await authenticatedFetch('/v1/instruments', { method: 'DELETE' });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.detail ?? 'Failed to delete instruments');
-    }
-    resultsTableBody.innerHTML = '';
-    resultsMeta.textContent = '';
-    state.nextCursor = null;
-    loadMoreButton.disabled = true;
-    setStatus(searchStatus, `Deleted ${payload.deleted ?? 0} instruments.`, 'success');
-  } catch (error) {
-    console.error(error);
-    setStatus(searchStatus, error.message, 'error');
-  }
-});
-
-async function refreshImports() {
-  if (!state.token) {
-    return;
-  }
-  try {
-    const response = await authenticatedFetch('/v1/instruments/imports');
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.detail ?? 'Unable to fetch imports');
-    }
-    renderImports(payload);
-  } catch (error) {
-    console.error(error);
-    setStatus(importStatus, error.message, 'error');
-  }
-}
-
-refreshImportsButton.addEventListener('click', refreshImports);
-
-// Provide a starter search on page load for convenience once logged in.
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && state.token && !resultsTableBody.children.length) {
-    executeSearch({ append: false });
-  }
-});
+    const res = await fetch(`/v1/auth/login?email=${enco

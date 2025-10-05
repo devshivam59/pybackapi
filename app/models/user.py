@@ -30,6 +30,7 @@ class User(UserBase):
     roles: List[str] = Field(default_factory=lambda: ["client"])
     created_at: datetime = Field(default_factory=datetime.utcnow)
     approved: bool = False
+    password_hash: Optional[str] = None
 
 
 class UserPublic(UserBase):

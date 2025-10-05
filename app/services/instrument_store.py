@@ -7,8 +7,8 @@ from contextlib import contextmanager
 from datetime import datetime
 from io import TextIOBase
 from pathlib import Path
-from typing import Iterator, List, Optional, Sequence, Tuple
-from uuid import uuid4
+from typing import Dict, Iterator, List, Optional, Sequence, Tuple
+from uuid import NAMESPACE_URL, uuid5
 
 from rapidfuzz import fuzz, process
 
@@ -34,19 +34,29 @@ REQUIRED_COLUMNS = {
 class InstrumentStore:
     """SQLite-backed store for instrument metadata and import tracking."""
 
-    def __init__(self, db_path: Optional[Path] = None, batch_size: int = 2000) -> None:
+    def __init__(
+        self,
+        db_path: Optional[Path] = None,
+        batch_size: int = 2000,
+        max_candidates: int = 2000,
+    ) -> None:
         settings = get_settings()
         self.db_path = Path(db_path or settings.instrument_db_path)
         self.batch_size = batch_size
+        self.max_candidates = max_candidates
         self._initialized = False
+        self._namespace = uuid5(NAMESPACE_URL, "pybackapi.instrument")
 
     def initialize(self) -> None:
         if self._initialized:
             return
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._get_connection() as conn:
+        conn = sqlite3.connect(self.db_path)
+        try:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.execute("PRAGMA temp_store=MEMORY;")
+            conn.execute("PRAGMA cache_size=-131072;")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS instruments (
@@ -69,22 +79,19 @@ class InstrumentStore:
                 """
             )
             conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_instruments_tradingsymbol
-                ON instruments(tradingsymbol)
-                """
+                "CREATE INDEX IF NOT EXISTS idx_instruments_tradingsymbol ON instruments(tradingsymbol)"
             )
             conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_instruments_segment
-                ON instruments(segment)
-                """
+                "CREATE INDEX IF NOT EXISTS idx_instruments_tradingsymbol_nocase ON instruments(tradingsymbol COLLATE NOCASE)"
             )
             conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_instruments_exchange
-                ON instruments(exchange)
-                """
+                "CREATE INDEX IF NOT EXISTS idx_instruments_segment ON instruments(segment)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_instruments_exchange ON instruments(exchange)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_instruments_instrument_type ON instruments(instrument_type)"
             )
             conn.execute(
                 """
@@ -102,6 +109,9 @@ class InstrumentStore:
                 )
                 """
             )
+            conn.commit()
+        finally:
+            conn.close()
         self._initialized = True
 
     @contextmanager
@@ -112,6 +122,9 @@ class InstrumentStore:
         try:
             yield conn
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
@@ -182,19 +195,14 @@ class InstrumentStore:
 
     def get_import(self, import_id: str) -> InstrumentImport:
         with self._get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM instrument_imports WHERE id = ?",
-                (import_id,),
-            ).fetchone()
+            row = conn.execute("SELECT * FROM instrument_imports WHERE id = ?", (import_id,)).fetchone()
         if row is None:
             raise KeyError(import_id)
         return self._row_to_import(row)
 
     def list_imports(self) -> List[InstrumentImport]:
         with self._get_connection() as conn:
-            rows = conn.execute(
-                "SELECT * FROM instrument_imports ORDER BY started_at DESC",
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM instrument_imports ORDER BY started_at DESC").fetchall()
         return [self._row_to_import(row) for row in rows]
 
     def import_csv(
@@ -217,13 +225,14 @@ class InstrumentStore:
         now = datetime.utcnow
 
         with self._get_connection() as conn:
+            existing_ids = self._load_existing_ids(conn)
             if replace_existing:
                 conn.execute("DELETE FROM instruments")
             for row in reader:
                 rows_in += 1
                 try:
-                    normalized = self._normalize_row(row, now())
-                except ValueError as exc:  # noqa: PERF203
+                    normalized = self._prepare_row(row, now(), existing_ids)
+                except ValueError as exc:
                     rows_err += 1
                     errors.append(f"Row {rows_in}: {exc}")
                     continue
@@ -273,29 +282,29 @@ class InstrumentStore:
             batch,
         )
 
-    def _normalize_row(self, row: dict, timestamp: datetime) -> Tuple:
+    def _prepare_row(self, row: dict, timestamp: datetime, existing_ids: Dict[str, str]) -> Tuple:
         def clean_str(value: Optional[str]) -> str:
             return (value or "").strip()
 
         def parse_float(value: Optional[str], field: str, *, required: bool = False) -> float:
-            if value is None or value == "":
+            if not value:
                 if required:
                     raise ValueError(f"{field} is required")
                 return 0.0
             try:
                 return float(value)
-            except ValueError as exc:  # noqa: B904
-                raise ValueError(f"Invalid float for {field}: {value}") from exc
+            except ValueError:
+                raise ValueError(f"Invalid float for {field}: {value}")
 
         def parse_int(value: Optional[str], field: str, *, required: bool = False) -> int:
-            if value is None or value == "":
+            if not value:
                 if required:
                     raise ValueError(f"{field} is required")
                 return 0
             try:
                 return int(float(value))
-            except ValueError as exc:  # noqa: B904
-                raise ValueError(f"Invalid integer for {field}: {value}") from exc
+            except ValueError:
+                raise ValueError(f"Invalid integer for {field}: {value}")
 
         instrument_token = clean_str(row.get("instrument_token"))
         if not instrument_token:
@@ -308,18 +317,18 @@ class InstrumentStore:
             raise ValueError("tradingsymbol is required")
         name = clean_str(row.get("name")) or None
         expiry = clean_str(row.get("expiry")) or None
-        instrument_type = clean_str(row.get("instrument_type"))
-        segment = clean_str(row.get("segment"))
-        exchange = clean_str(row.get("exchange"))
-        if not instrument_type:
-            raise ValueError("instrument_type is required")
-        if not segment:
-            raise ValueError("segment is required")
-        if not exchange:
-            raise ValueError("exchange is required")
+        instrument_type = clean_str(row.get("instrument_type")).upper()
+        segment = clean_str(row.get("segment")).upper()
+        exchange = clean_str(row.get("exchange")).upper()
+
+        key = self._make_key(exchange, instrument_token)
+        instrument_id = existing_ids.get(key)
+        if instrument_id is None:
+            instrument_id = self._generate_instrument_id(exchange, instrument_token)
+            existing_ids[key] = instrument_id
 
         return (
-            f"ins_{uuid4().hex}",
+            instrument_id,
             instrument_token,
             exchange_token,
             tradingsymbol,
@@ -336,6 +345,23 @@ class InstrumentStore:
             timestamp.isoformat(),
         )
 
+    def _generate_instrument_id(self, exchange: str, instrument_token: str) -> str:
+        seed = f"{exchange}:{instrument_token}"
+        return f"ins_{uuid5(self._namespace, seed).hex}"
+
+    def _load_existing_ids(self, conn: sqlite3.Connection) -> Dict[str, str]:
+        rows = conn.execute(
+            "SELECT instrument_token, exchange, instrument_id FROM instruments",
+        ).fetchall()
+        return {
+            self._make_key(row["exchange"], row["instrument_token"]): row["instrument_id"]
+            for row in rows
+        }
+
+    @staticmethod
+    def _make_key(exchange: str, instrument_token: str) -> str:
+        return f"{exchange.upper()}:{instrument_token}"
+
     def clear_instruments(self) -> int:
         with self._get_connection() as conn:
             cursor = conn.execute("SELECT COUNT(*) FROM instruments")
@@ -348,6 +374,18 @@ class InstrumentStore:
             cursor = conn.execute("SELECT COUNT(*) FROM instruments")
             result = cursor.fetchone()
         return int(result[0]) if result else 0
+
+    def get_instruments_by_ids(self, instrument_ids: Sequence[str]) -> List[Instrument]:
+        if not instrument_ids:
+            return []
+        placeholders = ",".join("?" for _ in instrument_ids)
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM instruments WHERE instrument_id IN ({placeholders})",
+                list(instrument_ids),
+            ).fetchall()
+        row_map = {row["instrument_id"]: self._row_to_instrument(row) for row in rows}
+        return [row_map[instrument_id] for instrument_id in instrument_ids if instrument_id in row_map]
 
     def get_instrument(self, instrument_id: str) -> Optional[Instrument]:
         with self._get_connection() as conn:
@@ -392,33 +430,39 @@ class InstrumentStore:
             params.append(instrument_type)
 
         base_where = " AND ".join(where_clauses)
-        row_map = {}
         total = 0
 
         with self._get_connection() as conn:
             if query:
-                like_term = f"%{query.lower()}%"
+                like_term = f"%{query}%"
+                like_where = (
+                    f"{base_where} AND ("
+                    " tradingsymbol LIKE ? COLLATE NOCASE OR"
+                    " name LIKE ? COLLATE NOCASE OR"
+                    " instrument_token LIKE ?"
+                    ")"
+                )
                 like_params = params + [like_term, like_term, like_term]
+                count_row = conn.execute(
+                    f"SELECT COUNT(*) as total FROM instruments WHERE {like_where}",
+                    like_params,
+                ).fetchone()
+                total = int(count_row["total"]) if count_row else 0
+                candidate_limit = max(min(self.max_candidates, offset + limit * 2), limit)
                 candidate_rows = conn.execute(
                     f"""
                     SELECT * FROM instruments
-                    WHERE {base_where} AND (
-                        LOWER(tradingsymbol) LIKE ? OR
-                        LOWER(name) LIKE ? OR
-                        LOWER(instrument_token) LIKE ?
-                    )
+                    WHERE {like_where}
+                    ORDER BY tradingsymbol COLLATE NOCASE
+                    LIMIT ?
                     """,
-                    like_params,
+                    like_params + [candidate_limit],
                 ).fetchall()
-                if not candidate_rows:
-                    candidate_rows = conn.execute(
-                        f"SELECT * FROM instruments WHERE {base_where}",
-                        params,
-                    ).fetchall()
-                row_map = {row["instrument_id"]: row for row in candidate_rows}
-                total = len(row_map)
-                if not row_map:
+                if not candidate_rows and not total:
                     return [], None, 0
+                row_map = {row["instrument_id"]: row for row in candidate_rows}
+                if not row_map:
+                    return [], None, total
                 choices = {
                     instrument_id: f"{row['tradingsymbol']} {row['name'] or ''}"
                     for instrument_id, row in row_map.items()
@@ -432,6 +476,7 @@ class InstrumentStore:
                 ordered_ids = [match[0] for match in matches]
                 sliced_ids = ordered_ids[offset : offset + limit]
                 instruments = [self._row_to_instrument(row_map[row_id]) for row_id in sliced_ids]
+                total = min(total, len(ordered_ids)) if total else len(ordered_ids)
             else:
                 count_row = conn.execute(
                     f"SELECT COUNT(*) as total FROM instruments WHERE {base_where}",
@@ -442,7 +487,7 @@ class InstrumentStore:
                     f"""
                     SELECT * FROM instruments
                     WHERE {base_where}
-                    ORDER BY tradingsymbol
+                    ORDER BY tradingsymbol COLLATE NOCASE
                     LIMIT ? OFFSET ?
                     """,
                     params + [limit, offset],
@@ -478,9 +523,7 @@ class InstrumentStore:
             id=row["id"],
             source=row["source"],
             started_at=datetime.fromisoformat(row["started_at"]),
-            finished_at=datetime.fromisoformat(row["finished_at"])
-            if row["finished_at"]
-            else None,
+            finished_at=datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None,
             rows_in=row["rows_in"],
             rows_ok=row["rows_ok"],
             rows_err=row["rows_err"],
