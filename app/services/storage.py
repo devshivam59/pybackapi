@@ -37,6 +37,8 @@ class InMemoryDB:
     instrument_imports: Dict[str, InstrumentImport] = field(default_factory=dict)
     instrument_sources: Dict[str, InstrumentSource] = field(default_factory=dict)
     idempotency_keys: Dict[str, str] = field(default_factory=dict)
+
+    # Kite Connect credentials (Codex branch enhancement)
     kite_api_key: Optional[str] = None
     kite_access_token: Optional[str] = None
     kite_token_valid_till: Optional[datetime] = None
@@ -68,6 +70,7 @@ _db: Optional[InMemoryDB] = None
 
 
 def get_db() -> InMemoryDB:
+    """Returns a singleton in-memory database instance."""
     global _db
     if _db is None:
         _db = InMemoryDB()

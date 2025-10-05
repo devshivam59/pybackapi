@@ -26,6 +26,7 @@ body {
   color: var(--text);
 }
 
+/* Dashboard Layout */
 .dashboard {
   display: grid;
   grid-template-columns: minmax(260px, 320px) 1fr;
@@ -64,13 +65,6 @@ body {
   font-size: 1.15rem;
 }
 
-.sidebar-card p {
-  margin-top: 0;
-  margin-bottom: 1rem;
-  color: rgba(226, 232, 240, 0.82);
-  font-size: 0.9rem;
-}
-
 .sidebar-card input {
   border-radius: 10px;
   border: 1px solid rgba(148, 163, 184, 0.35);
@@ -78,16 +72,6 @@ body {
   font-size: 0.95rem;
   background: rgba(15, 23, 42, 0.65);
   color: #f8fafc;
-}
-
-.sidebar-card label {
-  font-weight: 600;
-  margin-bottom: 0.4rem;
-}
-
-.sidebar-card button {
-  width: 100%;
-  margin-top: 0.35rem;
 }
 
 .sidebar-nav {
@@ -112,6 +96,7 @@ body {
   color: #fff;
 }
 
+/* Main Panels */
 .main {
   padding: 2.5rem 3rem 3rem;
   display: flex;
@@ -152,6 +137,7 @@ body {
   flex-wrap: wrap;
 }
 
+/* Cards */
 .card,
 .sidebar-card {
   border-radius: 16px;
@@ -170,11 +156,6 @@ body {
   justify-content: space-between;
   gap: 1rem;
   margin-bottom: 1rem;
-}
-
-.card h3 {
-  margin-top: 0;
-  margin-bottom: 0.75rem;
 }
 
 .grid-two {
@@ -210,6 +191,7 @@ body {
   font-weight: 700;
 }
 
+/* Forms */
 .form-row {
   display: flex;
   flex-direction: column;
@@ -241,6 +223,7 @@ body {
   gap: 0.6rem;
 }
 
+/* Buttons */
 button {
   display: inline-flex;
   align-items: center;
@@ -282,30 +265,7 @@ button.ghost.danger {
   background: rgba(220, 38, 38, 0.08);
 }
 
-.inline-form {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  margin-bottom: 1rem;
-}
-
-.inline-form input {
-  flex: 1 1 220px;
-}
-
-.watchlist-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.85rem;
-  align-items: center;
-  margin-bottom: 1rem;
-}
-
-.watchlist-controls select {
-  min-width: 220px;
-}
-
+/* Tables */
 .table-wrapper {
   overflow-x: auto;
   margin-top: 1rem;
@@ -339,11 +299,7 @@ tbody tr:hover {
   background: rgba(148, 163, 184, 0.12);
 }
 
-.table-action {
-  padding: 0.45rem 0.8rem;
-  font-size: 0.85rem;
-}
-
+/* Status and text utilities */
 .status-line {
   min-height: 1.25rem;
   font-size: 0.9rem;
@@ -370,55 +326,7 @@ tbody tr:hover {
   color: var(--accent-dark);
 }
 
-#results-meta,
-#watchlist-meta {
-  font-size: 0.9rem;
-  color: var(--muted);
-}
-
-.user-role-options {
-  display: flex;
-  gap: 0.65rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.6rem;
-}
-
-.user-role-options label {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-weight: 500;
-}
-
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  background: rgba(37, 99, 235, 0.1);
-  color: var(--accent-dark);
-  margin-bottom: 0.6rem;
-}
-
-.status-badge.success {
-  background: rgba(22, 163, 74, 0.15);
-  color: var(--success);
-}
-
-.status-badge.pending {
-  background: rgba(234, 179, 8, 0.18);
-  color: #b45309;
-}
-
-.user-actions {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
+/* Responsive */
 @media (max-width: 960px) {
   .dashboard {
     grid-template-columns: 1fr;

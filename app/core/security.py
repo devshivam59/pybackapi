@@ -6,6 +6,7 @@ from passlib.context import CryptContext
 
 from .config import get_settings
 
+# Use PBKDF2-SHA256 for portability and strong security
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 

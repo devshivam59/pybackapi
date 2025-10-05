@@ -2,11 +2,11 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 class UserBase(BaseModel):
-    email: str
+    email: EmailStr
     name: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None

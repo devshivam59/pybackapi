@@ -108,6 +108,7 @@ async def search_instruments(
         if offset < 0:
             offset = 0
 
+    # normalize filters to uppercase for consistent matching
     normalized_segment = segment.upper() if segment else None
     normalized_exchange = exchange.upper() if exchange else None
     normalized_type = instrument_type.upper() if instrument_type else None

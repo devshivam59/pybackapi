@@ -79,34 +79,19 @@ class InstrumentStore:
                 """
             )
             conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_instruments_tradingsymbol
-                ON instruments(tradingsymbol)
-                """
+                "CREATE INDEX IF NOT EXISTS idx_instruments_tradingsymbol ON instruments(tradingsymbol)"
             )
             conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_instruments_tradingsymbol_nocase
-                ON instruments(tradingsymbol COLLATE NOCASE)
-                """
+                "CREATE INDEX IF NOT EXISTS idx_instruments_tradingsymbol_nocase ON instruments(tradingsymbol COLLATE NOCASE)"
             )
             conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_instruments_segment
-                ON instruments(segment)
-                """
+                "CREATE INDEX IF NOT EXISTS idx_instruments_segment ON instruments(segment)"
             )
             conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_instruments_exchange
-                ON instruments(exchange)
-                """
+                "CREATE INDEX IF NOT EXISTS idx_instruments_exchange ON instruments(exchange)"
             )
             conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_instruments_instrument_type
-                ON instruments(instrument_type)
-                """
+                "CREATE INDEX IF NOT EXISTS idx_instruments_instrument_type ON instruments(instrument_type)"
             )
             conn.execute(
                 """
@@ -210,19 +195,14 @@ class InstrumentStore:
 
     def get_import(self, import_id: str) -> InstrumentImport:
         with self._get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM instrument_imports WHERE id = ?",
-                (import_id,),
-            ).fetchone()
+            row = conn.execute("SELECT * FROM instrument_imports WHERE id = ?", (import_id,)).fetchone()
         if row is None:
             raise KeyError(import_id)
         return self._row_to_import(row)
 
     def list_imports(self) -> List[InstrumentImport]:
         with self._get_connection() as conn:
-            rows = conn.execute(
-                "SELECT * FROM instrument_imports ORDER BY started_at DESC",
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM instrument_imports ORDER BY started_at DESC").fetchall()
         return [self._row_to_import(row) for row in rows]
 
     def import_csv(
@@ -252,7 +232,7 @@ class InstrumentStore:
                 rows_in += 1
                 try:
                     normalized = self._prepare_row(row, now(), existing_ids)
-                except ValueError as exc:  # noqa: PERF203
+                except ValueError as exc:
                     rows_err += 1
                     errors.append(f"Row {rows_in}: {exc}")
                     continue
@@ -302,34 +282,29 @@ class InstrumentStore:
             batch,
         )
 
-    def _prepare_row(
-        self,
-        row: dict,
-        timestamp: datetime,
-        existing_ids: Dict[str, str],
-    ) -> Tuple:
+    def _prepare_row(self, row: dict, timestamp: datetime, existing_ids: Dict[str, str]) -> Tuple:
         def clean_str(value: Optional[str]) -> str:
             return (value or "").strip()
 
         def parse_float(value: Optional[str], field: str, *, required: bool = False) -> float:
-            if value is None or value == "":
+            if not value:
                 if required:
                     raise ValueError(f"{field} is required")
                 return 0.0
             try:
                 return float(value)
-            except ValueError as exc:  # noqa: B904
-                raise ValueError(f"Invalid float for {field}: {value}") from exc
+            except ValueError:
+                raise ValueError(f"Invalid float for {field}: {value}")
 
         def parse_int(value: Optional[str], field: str, *, required: bool = False) -> int:
-            if value is None or value == "":
+            if not value:
                 if required:
                     raise ValueError(f"{field} is required")
                 return 0
             try:
                 return int(float(value))
-            except ValueError as exc:  # noqa: B904
-                raise ValueError(f"Invalid integer for {field}: {value}") from exc
+            except ValueError:
+                raise ValueError(f"Invalid integer for {field}: {value}")
 
         instrument_token = clean_str(row.get("instrument_token"))
         if not instrument_token:
@@ -342,19 +317,9 @@ class InstrumentStore:
             raise ValueError("tradingsymbol is required")
         name = clean_str(row.get("name")) or None
         expiry = clean_str(row.get("expiry")) or None
-        instrument_type = clean_str(row.get("instrument_type"))
-        segment = clean_str(row.get("segment"))
-        exchange = clean_str(row.get("exchange"))
-        if not instrument_type:
-            raise ValueError("instrument_type is required")
-        if not segment:
-            raise ValueError("segment is required")
-        if not exchange:
-            raise ValueError("exchange is required")
-
-        instrument_type = instrument_type.upper()
-        segment = segment.upper()
-        exchange = exchange.upper()
+        instrument_type = clean_str(row.get("instrument_type")).upper()
+        segment = clean_str(row.get("segment")).upper()
+        exchange = clean_str(row.get("exchange")).upper()
 
         key = self._make_key(exchange, instrument_token)
         instrument_id = existing_ids.get(key)
@@ -558,9 +523,7 @@ class InstrumentStore:
             id=row["id"],
             source=row["source"],
             started_at=datetime.fromisoformat(row["started_at"]),
-            finished_at=datetime.fromisoformat(row["finished_at"])
-            if row["finished_at"]
-            else None,
+            finished_at=datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None,
             rows_in=row["rows_in"],
             rows_ok=row["rows_ok"],
             rows_err=row["rows_err"],
