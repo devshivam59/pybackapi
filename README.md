@@ -67,3 +67,13 @@ The demo admin is provisioned on startup and has full privileges for importing/p
 ### Running Tests
 
 This scaffold does not include automated tests yet. You can exercise the API using the interactive docs or HTTP clients such as `curl` or Postman.
+
+### Checking for merge conflicts
+
+Run the helper script before opening a pull request to confirm that no conflict markers remain after manual resolutions:
+
+```bash
+python scripts/check_merge_conflicts.py
+```
+
+The script will exit with a non-zero status and list offending files if any `<<<<<<<`, `=======`, or `>>>>>>>` markers are still present.
