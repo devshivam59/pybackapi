@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Instrument Search</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 2em; }
+        #search-container { margin-bottom: 1em; }
+        #results { list-style-type: none; padding: 0; }
+        #results li { padding: 0.5em; border: 1px solid #ccc; margin-bottom: 0.5em; cursor: pointer; }
+        #results li:hover { background-color: #f0f0f0; }
+        #live-price-container { margin-top: 2em; }
+    </style>
+</head>
+<body>
+    <h1>Instrument Search</h1>
+    <div id="search-container">
+        <input type="text" id="search-input" placeholder="Enter instrument name or symbol">
+        <button id="search-button">Search</button>
+    </div>
+
+    <h2>Results</h2>
+    <ul id="results"></ul>
+
+    <div id="live-price-container">
+        <h2>Live Price</h2>
+        <p>Selected Instrument: <strong id="selected-instrument">None</strong></p>
+        <p>Price: <strong id="live-price">N/A</strong></p>
+    </div>
+
+    <script>
+        const searchInput = document.getElementById('search-input');
+        const searchButton = document.getElementById('search-button');
+        const resultsList = document.getElementById('results');
+        const selectedInstrumentElem = document.getElementById('selected-instrument');
+        const livePriceElem = document.getElementById('live-price');
+
+        let socket;
+
+        searchButton.addEventListener('click', async () => {
+            const query = searchInput.value;
+            if (query.length < 2) {
+                alert('Please enter at least 2 characters to search.');
+                return;
+            }
+
+            const response = await fetch(`/api/v1/instruments/search?q=${query}`);
+            const results = await response.json();
+
+            resultsList.innerHTML = '';
+            if (results.length > 0) {
+                results.forEach(instrument => {
+                    const li = document.createElement('li');
+                    li.textContent = `${instrument.name} (${instrument.tradingsymbol})`;
+                    li.dataset.instrumentToken = instrument.instrument_token;
+                    li.dataset.instrumentName = `${instrument.name} (${instrument.tradingsymbol})`;
+                    resultsList.appendChild(li);
+                });
+            } else {
+                resultsList.innerHTML = '<li>No results found</li>';
+            }
+        });
+
+        resultsList.addEventListener('click', (event) => {
+            if (event.target.tagName === 'LI' && event.target.dataset.instrumentToken) {
+                const instrumentToken = event.target.dataset.instrumentToken;
+                const instrumentName = event.target.dataset.instrumentName;
+
+                selectedInstrumentElem.textContent = instrumentName;
+                livePriceElem.textContent = 'Connecting...';
+
+                if (socket) {
+                    socket.close();
+                }
+
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                socket = new WebSocket(`${wsProtocol}//${window.location.host}/api/v1/instruments/ws/live-price/${instrumentToken}`);
+
+                socket.onopen = () => {
+                    livePriceElem.textContent = 'Connected. Waiting for price...';
+                };
+
+                socket.onmessage = (event) => {
+                    try {
+                        const tick = JSON.parse(event.data);
+                        livePriceElem.textContent = tick.last_price || 'N/A';
+                    } catch (e) {
+                        console.error('Error parsing tick data:', e);
+                        livePriceElem.textContent = 'Error processing price.';
+                    }
+                };
+
+                socket.onclose = () => {
+                    livePriceElem.textContent = 'Disconnected.';
+                };
+
+                socket.onerror = (error) => {
+                    console.error('WebSocket Error:', error);
+                    livePriceElem.textContent = 'Connection Error.';
+                };
+            }
+        });
+    </script>
+</body>
+</html>
